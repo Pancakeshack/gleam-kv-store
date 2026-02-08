@@ -1,4 +1,6 @@
 import gleam/http
+import gleam/list
+import gleam/result
 import kv_store/web
 import wisp.{type Request, type Response}
 
@@ -8,47 +10,48 @@ pub fn handle_request(req: Request) -> Response {
   // Apply the middleware stack for this request/response.
   use req <- web.middleware(req)
 
-  case wisp.path_segments(req) {
-    [] -> home_page(req)
-
-    // matches /comments
-    ["comments"] -> comments(req)
-
-    // matches /comments/:id
-    ["comments", id] -> show_comment(req, id)
-
-    _ -> wisp.not_found()
-  }
-}
-
-fn home_page(req: Request) -> Response {
-  use <- wisp.require_method(req, http.Get)
-
-  wisp.ok()
-  |> wisp.html_body("Hello, Joe!")
-}
-
-fn comments(req: Request) -> Response {
   case req.method {
-    http.Get -> list_comments()
-    http.Post -> create_comment(req)
-    _ -> wisp.method_not_allowed([http.Get, http.Post])
+    http.Get -> show_form()
+    http.Post -> handle_form_submission(req)
+    _ -> wisp.method_not_allowed(allowed: [http.Get, http.Post])
   }
 }
 
-fn list_comments() -> Response {
+pub fn show_form() -> Response {
+  let html =
+    "<form method='post'>
+        <label>Title:
+          <input type='text' name='title'>
+        </label>
+        <label>Name:
+          <input type='text' name='name'>
+        </label>
+        <input type='submit' value='Submit'>
+      </form>"
+
   wisp.ok()
-  |> wisp.html_body("Comments!")
+  |> wisp.html_body(html)
 }
 
-fn create_comment(_req: Request) -> Response {
-  wisp.created()
-  |> wisp.html_body("Created")
-}
+pub fn handle_form_submission(req: Request) -> Response {
+  use formdata <- wisp.require_form(req)
 
-fn show_comment(req: Request, id: String) -> Response {
-  use <- wisp.require_method(req, http.Get)
+  let result = {
+    use title <- result.try(list.key_find(formdata.values, "title"))
+    use name <- result.try(list.key_find(formdata.values, "name"))
 
-  wisp.ok()
-  |> wisp.html_body("Comment with id " <> id)
+    let greeting =
+      "Hi, " <> wisp.escape_html(title) <> " " <> wisp.escape_html(name) <> "!"
+    Ok(greeting)
+  }
+
+  case result {
+    Ok(content) -> {
+      wisp.ok()
+      |> wisp.html_body(content)
+    }
+    Error(_) -> {
+      wisp.bad_request("Invalid form")
+    }
+  }
 }
