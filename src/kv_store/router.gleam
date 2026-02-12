@@ -1,57 +1,46 @@
+import gleam/dynamic/decode
 import gleam/http
-import gleam/list
+import gleam/json
 import gleam/result
 import kv_store/web
 import wisp.{type Request, type Response}
 
-/// The HTTP request handler- your application!
-/// 
+pub type Person {
+  Person(name: String, is_cool: Bool)
+}
+
+// To decode the type we need a dynamic decoder.
+// See the standard library documentation for more information on decoding
+// dynamic values [1].
+//
+// [1]: https://hexdocs.pm/gleam_stdlib/gleam/dynamic.html
+fn person_decoder() -> decode.Decoder(Person) {
+  use name <- decode.field("name", decode.string)
+  use is_cool <- decode.field("is-cool", decode.bool)
+  decode.success(Person(name: name, is_cool: is_cool))
+}
+
 pub fn handle_request(req: Request) -> Response {
-  // Apply the middleware stack for this request/response.
   use req <- web.middleware(req)
+  use <- wisp.require_method(req, http.Post)
 
-  case req.method {
-    http.Get -> show_form()
-    http.Post -> handle_form_submission(req)
-    _ -> wisp.method_not_allowed(allowed: [http.Get, http.Post])
-  }
-}
-
-pub fn show_form() -> Response {
-  let html =
-    "<form method='post'>
-        <label>Title:
-          <input type='text' name='title'>
-        </label>
-        <label>Name:
-          <input type='text' name='name'>
-        </label>
-        <input type='submit' value='Submit'>
-      </form>"
-
-  wisp.ok()
-  |> wisp.html_body(html)
-}
-
-pub fn handle_form_submission(req: Request) -> Response {
-  use formdata <- wisp.require_form(req)
+  use json <- wisp.require_json(req)
 
   let result = {
-    use title <- result.try(list.key_find(formdata.values, "title"))
-    use name <- result.try(list.key_find(formdata.values, "name"))
+    use person <- result.try(decode.run(json, person_decoder()))
 
-    let greeting =
-      "Hi, " <> wisp.escape_html(title) <> " " <> wisp.escape_html(name) <> "!"
-    Ok(greeting)
+    // JSON response
+    let object =
+      json.object([
+        #("name", json.string(person.name)),
+        #("is-cool", json.bool(person.is_cool)),
+        #("saved", json.bool(True)),
+      ])
+    Ok(json.to_string(object))
   }
 
   case result {
-    Ok(content) -> {
-      wisp.ok()
-      |> wisp.html_body(content)
-    }
-    Error(_) -> {
-      wisp.bad_request("Invalid form")
-    }
+    Ok(json) -> wisp.json_response(json, 201)
+    Error(_) -> wisp.unprocessable_content()
   }
 }
